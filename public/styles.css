@@ -84,7 +84,6 @@ p {
 .clipboard-bar,
 .upload-card,
 .selection-bar,
-.storage-status,
 .toolbar,
 .empty-state {
   border: 1px solid var(--line);
@@ -213,7 +212,7 @@ select:focus-visible {
   padding: 10px 13px;
   color: var(--text);
   background: rgba(255, 255, 255, 0.08);
-  transition: background 180ms ease, transform 180ms ease, border-color 180ms ease;
+  transition: background 180ms ease, transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
 .primary-button {
@@ -231,6 +230,7 @@ select:focus-visible {
 .icon-button:hover,
 .file-actions button:hover {
   background: rgba(255, 255, 255, 0.14);
+  transform: translateY(-1px);
 }
 
 .danger-button:hover,
@@ -282,6 +282,7 @@ select:focus-visible {
   border-radius: 8px;
   color: var(--text);
   text-align: left;
+  animation: floatIn 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .storage-card:hover,
@@ -290,6 +291,7 @@ select:focus-visible {
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.025)),
     var(--surface-3);
+  transform: translateY(-1px);
 }
 
 .storage-card strong {
@@ -345,14 +347,24 @@ select:focus-visible {
 }
 
 .storage-status {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  left: max(14px, calc((100vw - min(1120px, calc(100vw - 28px))) / 2));
+  z-index: 10;
   display: flex;
   flex-wrap: wrap;
   gap: 8px 12px;
   align-items: center;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  color: var(--muted);
+  height: 44px;
+  max-width: min(46vw, 520px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--green);
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  overflow: hidden;
 }
 
 .storage-status strong {
@@ -362,6 +374,9 @@ select:focus-visible {
 .storage-status span:first-child {
   color: var(--green);
   font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toolbar {
@@ -513,6 +528,8 @@ select:focus-visible {
   min-height: 74px;
   padding: 12px;
   border-radius: 8px;
+  transition: background 180ms ease, border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+  animation: floatIn 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .file-row.grid-item {
@@ -710,10 +727,25 @@ select:focus-visible {
   }
 }
 
+@keyframes floatIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (max-width: 760px) {
   .server-pill {
     max-width: calc(100vw - 86px);
     right: max(66px, calc(env(safe-area-inset-right) + 66px));
+  }
+
+  .storage-status {
+    max-width: calc(100vw - 126px);
   }
 
   .page-header {

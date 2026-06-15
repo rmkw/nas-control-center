@@ -4,6 +4,8 @@ Haze Vault es una app web local para administrar archivos de un NAS desde el
 navegador. Esta pensada para correr dentro de la red local y trabajar directo
 contra carpetas del sistema de archivos configuradas por el administrador.
 
+![Vista previa de Haze Vault](docs/assets/haze-vault-preview.png)
+
 ## Funciones
 
 - Papelera por almacenamiento en `.haze-trash`, con restaurar y borrar definitivo.

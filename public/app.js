@@ -112,7 +112,7 @@ els.loginForm.addEventListener("submit", async (event) => {
 });
 
 els.floatingLogout.addEventListener("click", logout);
-els.homeButton.addEventListener("click", showHome);
+els.homeButton.addEventListener("click", goBack);
 els.selectButton.addEventListener("click", async () => {
   state.selectMode = !state.selectMode;
   state.selected.clear();
@@ -192,6 +192,21 @@ async function showHome() {
   showOnly("home");
 }
 
+async function goBack() {
+  if (!state.storage) return showHome();
+  if (state.view === "trash") {
+    state.view = "files";
+    await refreshFiles();
+    return;
+  }
+  if (state.path) {
+    state.path = parentPath(state.path);
+    await refreshFiles();
+    return;
+  }
+  await showHome();
+}
+
 function renderStorages() {
   els.storageGrid.innerHTML = "";
   if (state.storages.length === 0) {
@@ -262,6 +277,7 @@ async function renderStorageStatus() {
 
 function renderCurrent() {
   renderCrumbs();
+  renderBackButton();
   renderFilterTabs();
   renderViewMode();
   renderSelection();
@@ -274,6 +290,11 @@ function renderCurrent() {
   els.trashList.classList.toggle("hidden", state.view !== "trash");
   if (state.view === "trash") renderTrash();
   else renderFiles(filteredItems(state.items));
+}
+
+function renderBackButton() {
+  els.homeButton.title = state.path || state.view === "trash" ? "Atras" : "Almacenamientos";
+  els.homeButton.setAttribute("aria-label", els.homeButton.title);
 }
 
 function renderCrumbs() {
@@ -344,30 +365,26 @@ function renderFiles(items) {
     els.fileList.append(emptyState("No hay resultados con ese filtro."));
     return;
   }
-  if (state.path) {
-    const up = makeRow({ name: "..", type: "folder", kind: "folder", path: parentPath(state.path), size: 0, modified: new Date().toISOString() }, true);
-    els.fileList.append(up);
-  }
-  for (const item of items) els.fileList.append(makeRow(item, false));
+  for (const item of items) els.fileList.append(makeRow(item));
 }
 
-function makeRow(item, isUp) {
+function makeRow(item) {
   const row = document.createElement("article");
   row.className = "file-row";
-  row.classList.toggle("grid-item", state.viewMode === "grid" && !isUp);
+  row.classList.toggle("grid-item", state.viewMode === "grid");
   row.classList.toggle("selected", state.selected.has(item.path));
   row.innerHTML = `
-    <div class="file-icon">${previewMarkup(item, isUp)}</div>
+    <div class="file-icon">${previewMarkup(item)}</div>
     <div>
       <div class="file-name"></div>
-      <div class="file-meta">${isUp ? "Subir un nivel" : item.type === "folder" ? "Carpeta" : formatBytes(item.size)}${isUp ? "" : ` · ${formatDate(item.modified)}`}</div>
+      <div class="file-meta">${item.type === "folder" ? "Carpeta" : formatBytes(item.size)} · ${formatDate(item.modified)}</div>
     </div>
     <div class="file-actions"></div>
   `;
   row.querySelector(".file-name").textContent = item.name;
   const actions = row.querySelector(".file-actions");
 
-  if (state.selectMode && !isUp) {
+  if (state.selectMode) {
     row.addEventListener("click", () => toggleSelection(item.path));
     actions.append(actionButton(state.selected.has(item.path) ? icons.checked : icons.unchecked, "Seleccionar", () => toggleSelection(item.path)));
     return row;
@@ -385,18 +402,16 @@ function makeRow(item, isUp) {
     if (item.kind === "image" || item.kind === "video") actions.append(actionButton(icons.eye, "Vista previa", () => previewItem(item)));
   }
 
-  if (!isUp) {
-    actions.append(actionButton(icons.info, "Detalles", () => showDetails(item)));
-    actions.append(actionButton(icons.rename, "Renombrar", () => renameItem(item)));
-    actions.append(actionButton(icons.copy, "Copiar", () => setClipboard(item)));
-    actions.append(actionButton(icons.trash, "Enviar a papelera", () => confirmTrash(item), "delete-action"));
-  }
+  actions.append(actionButton(icons.info, "Detalles", () => showDetails(item)));
+  actions.append(actionButton(icons.rename, "Renombrar", () => renameItem(item)));
+  actions.append(actionButton(icons.copy, "Copiar", () => setClipboard(item)));
+  actions.append(actionButton(icons.trash, "Enviar a papelera", () => confirmTrash(item), "delete-action"));
 
   return row;
 }
 
-function previewMarkup(item, isUp) {
-  if (isUp || item.type === "folder") return icons.folder;
+function previewMarkup(item) {
+  if (item.type === "folder") return icons.folder;
   if (item.kind === "image") {
     const src = `/api/preview?storage=${encodeURIComponent(state.storage.id)}&path=${encodeURIComponent(item.path)}`;
     return `<img class="thumb" src="${src}" alt="">`;
