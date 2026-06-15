@@ -101,6 +101,13 @@ npm run dev
 
 Alias de desarrollo para iniciar el mismo servidor.
 
+```bash
+npm test
+```
+
+Levanta una instancia temporal y valida login, proteccion contra `../`,
+auto-renombre, papelera/restauracion y streaming por rangos.
+
 ## Preparacion para git
 
 Antes de subir:
@@ -108,5 +115,6 @@ Antes de subir:
 ```bash
 node --check server.js
 node --check public/app.js
+npm test
 git status --short
 ```

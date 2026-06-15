@@ -5,7 +5,8 @@
   "description": "Local NAS web file manager for private and shared spaces.",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node scripts/smoke-test.js"
   },
   "engines": {
     "node": ">=18"
