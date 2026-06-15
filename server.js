@@ -12,6 +12,7 @@ const HOST = process.env.HOST || "127.0.0.1";
 const NAS_NAME = process.env.NAS_NAME || "nas.local";
 const USER = process.env.VAULT_USER || "usuario";
 const PASS = process.env.VAULT_PASS || "change-this-password";
+const PASS_SHA256 = String(process.env.VAULT_PASS_SHA256 || "").trim().toLowerCase();
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 8) * 60 * 60 * 1000;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 8);
@@ -97,7 +98,7 @@ async function login(req, res) {
     return sendJson(res, 429, { error: "Demasiados intentos. Espera unos minutos." });
   }
   const body = await readJson(req);
-  if (body.user !== USER || body.password !== PASS) {
+  if (body.user !== USER || !passwordMatches(body.password || "")) {
     recordLoginFailure(ip);
     return sendJson(res, 401, { error: "Usuario o contrasena incorrectos" });
   }
@@ -200,12 +201,44 @@ async function previewFile(req, res, url) {
     ".mov": "video/quicktime"
   };
   if (!types[ext]) return sendJson(res, 415, { error: "Sin vista previa" });
+  const range = req.headers.range;
+  if (range) return streamRange(res, rel.fullPath, stat.size, types[ext], range);
   res.writeHead(200, {
+    "Accept-Ranges": "bytes",
     "Content-Type": types[ext],
     "Content-Length": stat.size,
     "Cache-Control": "private, max-age=60"
   });
   fs.createReadStream(rel.fullPath).pipe(res);
+}
+
+function streamRange(res, filePath, size, contentType, range) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+  if (!match) {
+    res.writeHead(416, { "Content-Range": `bytes */${size}` });
+    res.end();
+    return;
+  }
+  let start = match[1] ? Number(match[1]) : 0;
+  let end = match[2] ? Number(match[2]) : size - 1;
+  if (!match[1] && match[2]) {
+    const suffixLength = Number(match[2]);
+    start = Math.max(size - suffixLength, 0);
+    end = size - 1;
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start < 0 || end >= size) {
+    res.writeHead(416, { "Content-Range": `bytes */${size}` });
+    res.end();
+    return;
+  }
+  res.writeHead(206, {
+    "Accept-Ranges": "bytes",
+    "Content-Type": contentType,
+    "Content-Length": end - start + 1,
+    "Content-Range": `bytes ${start}-${end}/${size}`,
+    "Cache-Control": "private, max-age=60"
+  });
+  fs.createReadStream(filePath, { start, end }).pipe(res);
 }
 
 async function detailsFile(res, url) {
@@ -451,8 +484,8 @@ function classifyName(name, folder) {
   if (folder) return "folder";
   if (isImage(name)) return "image";
   if (isVideo(name)) return "video";
-  if (isDocument(name)) return "document";
   if (isText(name)) return "text";
+  if (isDocument(name)) return "document";
   return "file";
 }
 
@@ -646,6 +679,22 @@ function recordLoginFailure(ip) {
     return;
   }
   entry.count++;
+}
+
+function passwordMatches(password) {
+  if (PASS_SHA256) {
+    if (!/^[a-f0-9]{64}$/.test(PASS_SHA256)) return false;
+    const hash = crypto.createHash("sha256").update(String(password)).digest("hex");
+    return safeEqual(hash, PASS_SHA256);
+  }
+  return safeEqual(String(password), PASS);
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
 }
 
 function setCookie(res, name, value, extra) {

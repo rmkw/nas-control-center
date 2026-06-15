@@ -129,6 +129,25 @@
       </form>
     </dialog>
 
+    <dialog id="editTextDialog" class="modal">
+      <form method="dialog" class="modal-card">
+        <div class="modal-title-row">
+          <h2 id="editTextTitle">Editar texto</h2>
+          <button value="cancel" class="icon-button" title="Cerrar">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+          </button>
+        </div>
+        <label>
+          Contenido
+          <textarea id="editTextContent"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button value="cancel" class="ghost-button">Cancelar</button>
+          <button value="ok" class="primary-button">Guardar</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="previewDialog" class="modal preview-modal">
       <form method="dialog" class="modal-card preview-card">
         <div class="modal-title-row">

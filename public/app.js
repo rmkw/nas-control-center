@@ -53,6 +53,9 @@ const els = {
   nameInput: document.querySelector("#nameInput"),
   contentLabel: document.querySelector("#contentLabel"),
   contentInput: document.querySelector("#contentInput"),
+  editTextDialog: document.querySelector("#editTextDialog"),
+  editTextTitle: document.querySelector("#editTextTitle"),
+  editTextContent: document.querySelector("#editTextContent"),
   deleteDialog: document.querySelector("#deleteDialog"),
   deleteTitle: document.querySelector("#deleteTitle"),
   deleteMessage: document.querySelector("#deleteMessage"),
@@ -309,7 +312,8 @@ function filteredItems(items) {
   const query = state.query;
   const filtered = items.filter((item) => {
     const matchesQuery = !query || item.name.toLowerCase().includes(query);
-    const matchesFilter = state.filter === "all" || item.kind === state.filter || item.type === state.filter;
+    const matchesDocument = state.filter === "document" && (item.kind === "document" || item.kind === "text");
+    const matchesFilter = state.filter === "all" || item.kind === state.filter || item.type === state.filter || matchesDocument;
     return matchesQuery && matchesFilter;
   });
   return sortItems(filtered, state.sort);
@@ -696,11 +700,13 @@ async function showDetails(item) {
 async function editText(item) {
   try {
     const data = await api(`/api/text?storage=${encodeURIComponent(state.storage.id)}&path=${encodeURIComponent(item.path)}`);
-    const result = await askName({ title: `Editar ${item.name}`, name: item.name, content: true });
-    if (!result) return;
+    els.editTextTitle.textContent = `Editar ${item.name}`;
+    els.editTextContent.value = data.content || "";
+    const result = await waitDialog(els.editTextDialog);
+    if (result !== "ok") return;
     await api(`/api/text?storage=${encodeURIComponent(state.storage.id)}&path=${encodeURIComponent(item.path)}`, {
       method: "PUT",
-      body: JSON.stringify({ content: result.content })
+      body: JSON.stringify({ content: els.editTextContent.value })
     });
     toast("Archivo actualizado");
     await refreshFiles();
@@ -784,13 +790,8 @@ function uploadOne(file) {
 function askName({ title, name, content }) {
   els.textDialogTitle.textContent = title;
   els.nameInput.value = name;
-  els.contentInput.value = content && state.currentDetail?.path ? "" : "";
+  els.contentInput.value = "";
   els.contentLabel.classList.toggle("hidden", !content);
-  if (content && title.startsWith("Editar")) {
-    api(`/api/text?storage=${encodeURIComponent(state.storage.id)}&path=${encodeURIComponent(state.currentDetail.path)}`)
-      .then((data) => { els.contentInput.value = data.content || ""; })
-      .catch((error) => toast(error.message));
-  }
   return waitDialog(els.textDialog).then((result) => {
     if (result !== "ok") return null;
     return { name: els.nameInput.value.trim(), content: els.contentInput.value };
