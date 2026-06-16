@@ -75,6 +75,27 @@ p {
   display: none !important;
 }
 
+.top-status-bar {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 10;
+  width: min(1120px, calc(100vw - 28px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.top-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+}
+
 .server-pill,
 .floating-logout,
 .auth-panel,
@@ -95,10 +116,6 @@ p {
 }
 
 .server-pill {
-  position: fixed;
-  top: max(14px, env(safe-area-inset-top));
-  right: max(70px, calc(env(safe-area-inset-right) + 70px));
-  z-index: 10;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -112,10 +129,6 @@ p {
 }
 
 .floating-logout {
-  position: fixed;
-  top: max(14px, env(safe-area-inset-top));
-  right: max(14px, env(safe-area-inset-right));
-  z-index: 10;
   width: 44px;
   height: 44px;
   display: grid;
@@ -347,15 +360,12 @@ select:focus-visible {
 }
 
 .storage-status {
-  position: fixed;
-  top: max(14px, env(safe-area-inset-top));
-  left: max(14px, calc((100vw - min(1120px, calc(100vw - 28px))) / 2));
-  z-index: 10;
   display: flex;
   flex-wrap: wrap;
   gap: 8px 12px;
   align-items: center;
   height: 44px;
+  min-width: 0;
   max-width: min(46vw, 520px);
   margin: 0;
   padding: 0;
@@ -365,6 +375,7 @@ select:focus-visible {
   box-shadow: none;
   backdrop-filter: none;
   overflow: hidden;
+  pointer-events: auto;
 }
 
 .storage-status strong {

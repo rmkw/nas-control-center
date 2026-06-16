@@ -825,6 +825,7 @@ function showOnly(view) {
   els.homeView.classList.toggle("hidden", view !== "home");
   els.explorerView.classList.toggle("hidden", view !== "explorer");
   els.floatingLogout.classList.toggle("hidden", view === "login");
+  els.storageStatus.classList.toggle("hidden", view !== "explorer");
 }
 
 async function api(url, options = {}) {

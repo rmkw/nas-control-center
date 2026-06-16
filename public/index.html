@@ -9,13 +9,18 @@
   </head>
   <body>
     <main id="app">
-      <div class="server-pill" id="serverPill">
-        <span class="status-dot"></span>
-        <span id="serverName">nas.local</span>
+      <div class="top-status-bar">
+        <section class="storage-status hidden" id="storageStatus"></section>
+        <div class="top-status-actions">
+          <div class="server-pill" id="serverPill">
+            <span class="status-dot"></span>
+            <span id="serverName">nas.local</span>
+          </div>
+          <button class="floating-logout hidden" id="floatingLogout" title="Cerrar sesion">
+            <svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5" /><path d="M15 12H3" /><path d="M14 4h4a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-4" /></svg>
+          </button>
+        </div>
       </div>
-      <button class="floating-logout hidden" id="floatingLogout" title="Cerrar sesion">
-        <svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5" /><path d="M15 12H3" /><path d="M14 4h4a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-4" /></svg>
-      </button>
 
       <section class="login-view" id="loginView">
         <form id="loginForm" class="auth-panel">
@@ -56,8 +61,6 @@
             </button>
           </div>
         </header>
-
-        <section class="storage-status" id="storageStatus"></section>
 
         <section class="toolbar" id="fileToolbar">
           <label class="search-box">
