@@ -399,7 +399,9 @@ function makeRow(item) {
     actions.append(actionButton(icons.download, "Descargar", () => {
       location.href = `/api/download?storage=${encodeURIComponent(state.storage.id)}&path=${encodeURIComponent(item.path)}`;
     }));
-    if (item.kind === "image" || item.kind === "video") actions.append(actionButton(icons.eye, "Vista previa", () => previewItem(item)));
+    if (item.kind === "image" || item.kind === "video" || isTextPreviewable(item)) {
+      actions.append(actionButton(icons.eye, "Vista previa", () => previewItem(item)));
+    }
   }
 
   actions.append(actionButton(icons.info, "Detalles", () => showDetails(item)));
@@ -680,13 +682,26 @@ async function pasteClipboard() {
 async function previewItem(item) {
   const src = `/api/preview?storage=${encodeURIComponent(state.storage.id)}&path=${encodeURIComponent(item.path)}`;
   els.previewTitle.textContent = item.name;
-  if (item.kind === "video") {
-    els.previewBody.innerHTML = `<video src="${src}" controls playsinline></video>`;
-  } else {
-    els.previewBody.innerHTML = `<img src="${src}" alt="">`;
+  try {
+    if (isTextPreviewable(item)) {
+      const data = await api(`/api/text?storage=${encodeURIComponent(state.storage.id)}&path=${encodeURIComponent(item.path)}`);
+      els.previewBody.innerHTML = `<pre class="text-preview"></pre>`;
+      els.previewBody.querySelector(".text-preview").textContent = data.content || "";
+    } else if (item.kind === "video") {
+      els.previewBody.innerHTML = `<video src="${src}" controls playsinline></video>`;
+    } else {
+      els.previewBody.innerHTML = `<img src="${src}" alt="">`;
+    }
+    await waitDialog(els.previewDialog);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    els.previewBody.innerHTML = "";
   }
-  await waitDialog(els.previewDialog);
-  els.previewBody.innerHTML = "";
+}
+
+function isTextPreviewable(item) {
+  return item.kind === "text" || /\.(txt|md|json|log|csv)$/i.test(item.name || "");
 }
 
 async function showDetails(item) {
