@@ -373,6 +373,7 @@ function makeRow(item) {
   row.className = "file-row";
   row.classList.toggle("grid-item", state.viewMode === "grid");
   row.classList.toggle("selected", state.selected.has(item.path));
+  row.classList.toggle("folder-row", item.type === "folder");
   row.innerHTML = `
     <div class="file-icon">${previewMarkup(item)}</div>
     <div>
@@ -391,10 +392,15 @@ function makeRow(item) {
   }
 
   if (item.type === "folder") {
-    actions.append(actionButton(icons.open, "Abrir", async () => {
-      state.path = item.path;
-      await refreshFiles();
-    }));
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `Abrir ${item.name}`);
+    row.addEventListener("click", () => openFolder(item));
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openFolder(item);
+    });
   } else {
     actions.append(actionButton(icons.download, "Descargar", () => {
       location.href = `/api/download?storage=${encodeURIComponent(state.storage.id)}&path=${encodeURIComponent(item.path)}`;
@@ -410,6 +416,11 @@ function makeRow(item) {
   actions.append(actionButton(icons.trash, "Enviar a papelera", () => confirmTrash(item), "delete-action"));
 
   return row;
+}
+
+async function openFolder(item) {
+  state.path = item.path;
+  await refreshFiles();
 }
 
 function previewMarkup(item) {
@@ -906,7 +917,9 @@ function escapeHtml(value) {
 }
 
 const icons = {
-  storage: `<svg viewBox="0 0 24 24"><path d="M4 7h16M6 7l1-3h10l1 3M5 7v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7" /></svg>`,
+  storage: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-database" viewBox="0 0 16 16">
+  <path d="M4.318 2.687C5.234 2.271 6.536 2 8 2s2.766.27 3.682.687C12.644 3.125 13 3.627 13 4c0 .374-.356.875-1.318 1.313C10.766 5.729 9.464 6 8 6s-2.766-.27-3.682-.687C3.356 4.875 3 4.373 3 4c0-.374.356-.875 1.318-1.313M13 5.698V7c0 .374-.356.875-1.318 1.313C10.766 8.729 9.464 9 8 9s-2.766-.27-3.682-.687C3.356 7.875 3 7.373 3 7V5.698c.271.202.58.378.904.525C4.978 6.711 6.427 7 8 7s3.022-.289 4.096-.777A5 5 0 0 0 13 5.698M14 4c0-1.007-.875-1.755-1.904-2.223C11.022 1.289 9.573 1 8 1s-3.022.289-4.096.777C2.875 2.245 2 2.993 2 4v9c0 1.007.875 1.755 1.904 2.223C4.978 15.71 6.427 16 8 16s3.022-.289 4.096-.777C13.125 14.755 14 14.007 14 13zm-1 4.698V10c0 .374-.356.875-1.318 1.313C10.766 11.729 9.464 12 8 12s-2.766-.27-3.682-.687C3.356 10.875 3 10.373 3 10V8.698c.271.202.58.378.904.525C4.978 9.71 6.427 10 8 10s3.022-.289 4.096-.777A5 5 0 0 0 13 8.698m0 3V13c0 .374-.356.875-1.318 1.313C10.766 14.729 9.464 15 8 15s-2.766-.27-3.682-.687C3.356 13.875 3 13.373 3 13v-1.302c.271.202.58.378.904.525C4.978 12.71 6.427 13 8 13s3.022-.289 4.096-.777c.324-.147.633-.323.904-.525"/>
+</svg>`,
   folder: `<svg viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z" /></svg>`,
   file: `<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7V3Z" /><path d="M14 3v5h5" /></svg>`,
   document: `<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7V3Z" /><path d="M14 3v5h5" /><path d="M9 13h6M9 17h6" /></svg>`,

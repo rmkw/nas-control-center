@@ -93,6 +93,7 @@ p {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-left: auto;
   pointer-events: auto;
 }
 
@@ -541,6 +542,10 @@ select:focus-visible {
   border-radius: 8px;
   transition: background 180ms ease, border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
   animation: floatIn 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.file-row.folder-row {
+  cursor: pointer;
 }
 
 .file-row.grid-item {
