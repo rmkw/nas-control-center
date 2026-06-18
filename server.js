@@ -1,6 +1,8 @@
 const http = require("http");
+const { spawn } = require("child_process");
 const fs = require("fs");
 const fsp = require("fs/promises");
+const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
 const { pipeline } = require("stream/promises");
@@ -17,6 +19,11 @@ const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 8) * 60 * 60 * 10
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 8);
 const TEXT_LIMIT_BYTES = Number(process.env.TEXT_LIMIT_BYTES || 1024 * 1024);
+const BACKEND_MODE = String(process.env.BACKEND_MODE || "local").trim().toLowerCase();
+const SMB_HOST = process.env.SMB_HOST || "127.0.0.1";
+const SMB_WORKGROUP = process.env.SMB_WORKGROUP || "";
+const SMBCLIENT_BIN = process.env.SMBCLIENT_BIN || "smbclient";
+const SMB_TIMEOUT_MS = Number(process.env.SMB_TIMEOUT_MS || 30000);
 const TRASH_DIR = ".haze-trash";
 const TRASH_MANIFEST = ".manifest.json";
 const STORAGES = parseStorages(process.env.STORAGE_ROOTS || "public:./data/public,private:./data/private");
@@ -24,10 +31,12 @@ const sessions = new Map();
 const loginAttempts = new Map();
 
 async function main() {
-  await Promise.all(STORAGES.map(async (storage) => {
-    await fsp.mkdir(storage.root, { recursive: true });
-    await ensureTrash(storage);
-  }));
+  if (BACKEND_MODE !== "smb") {
+    await Promise.all(STORAGES.map(async (storage) => {
+      await fsp.mkdir(storage.root, { recursive: true });
+      await ensureTrash(storage);
+    }));
+  }
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error) => {
@@ -39,7 +48,8 @@ async function main() {
   server.listen(PORT, HOST, () => {
     console.log(`Haze Vault listo en http://${HOST}:${PORT}`);
     console.log(`NAS: ${NAS_NAME}`);
-    for (const storage of STORAGES) console.log(`${storage.name}: ${storage.root}`);
+    if (BACKEND_MODE === "smb") console.log(`SMB: //${SMB_HOST}`);
+    else for (const storage of STORAGES) console.log(`${storage.name}: ${storage.root}`);
   });
 }
 
@@ -53,7 +63,7 @@ async function handle(req, res) {
     return serveAsset(res, url.pathname);
   }
   if (req.method === "GET" && url.pathname === "/api/status") {
-    return sendJson(res, 200, { nasName: NAS_NAME, online: true });
+    return sendJson(res, 200, { nasName: NAS_NAME, online: true, backendMode: BACKEND_MODE });
   }
   if (req.method === "POST" && url.pathname === "/api/login") return login(req, res);
   if (req.method === "POST" && url.pathname === "/api/logout") {
@@ -62,11 +72,13 @@ async function handle(req, res) {
     return sendJson(res, 200, { ok: true });
   }
 
-  if (!isAuthed(req)) return sendJson(res, 401, { error: "No autorizado" });
+  const session = getSession(req);
+  if (!session) return sendJson(res, 401, { error: "No autorizado" });
 
   if (req.method === "GET" && url.pathname === "/api/me") {
-    return sendJson(res, 200, { user: USER, nasName: NAS_NAME, online: true });
+    return sendJson(res, 200, { user: session.user || USER, nasName: NAS_NAME, online: true, backendMode: BACKEND_MODE });
   }
+  if (BACKEND_MODE === "smb") return handleSmb(req, res, url, session);
   if (req.method === "GET" && url.pathname === "/api/storages") return listStorages(res);
   if (req.method === "GET" && url.pathname === "/api/storage-status") return storageStatus(res);
   if (req.method === "GET" && url.pathname === "/api/files") return listFiles(res, url);
@@ -98,6 +110,9 @@ async function login(req, res) {
     return sendJson(res, 429, { error: "Demasiados intentos. Espera unos minutos." });
   }
   const body = await readJson(req);
+  if (BACKEND_MODE === "smb") {
+    return smbLogin(req, res, body, ip);
+  }
   if (body.user !== USER || !passwordMatches(body.password || "")) {
     recordLoginFailure(ip);
     return sendJson(res, 401, { error: "Usuario o contrasena incorrectos" });
@@ -107,6 +122,30 @@ async function login(req, res) {
   sessions.set(id, { createdAt: Date.now(), expiresAt: Date.now() + SESSION_TTL_MS });
   setCookie(res, "vault_session", id, `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}; HttpOnly; SameSite=Lax`);
   sendJson(res, 200, { ok: true });
+}
+
+async function handleSmb(req, res, url, session) {
+  if (req.method === "GET" && url.pathname === "/api/storages") return smbListStorages(res, session);
+  if (req.method === "GET" && url.pathname === "/api/storage-status") return smbStorageStatus(res, session);
+  if (req.method === "GET" && url.pathname === "/api/files") return smbListFiles(res, url, session);
+  if (req.method === "PUT" && url.pathname === "/api/upload") return smbUploadFile(req, res, url, session);
+  if (req.method === "GET" && url.pathname === "/api/download") return smbDownloadFile(req, res, url, session);
+  if (req.method === "GET" && url.pathname === "/api/preview") return smbPreviewFile(req, res, url, session);
+  if (req.method === "GET" && url.pathname === "/api/details") return smbDetailsFile(res, url, session);
+  if (req.method === "GET" && url.pathname === "/api/text") return smbGetTextFile(res, url, session);
+  if (req.method === "PUT" && url.pathname === "/api/text") return smbPutTextFile(req, res, url, session);
+  if (req.method === "POST" && url.pathname === "/api/folder") return smbCreateFolder(req, res, session);
+  if (req.method === "POST" && url.pathname === "/api/text-file") return smbCreateTextFile(req, res, session);
+  if (req.method === "POST" && url.pathname === "/api/rename") return smbRenameItem(req, res, session);
+  if (req.method === "POST" && url.pathname === "/api/trash") return smbTrashFile(req, res, session);
+  if (req.method === "POST" && url.pathname === "/api/trash-many") return smbTrashMany(req, res, session);
+  if (req.method === "DELETE" && url.pathname === "/api/file") return smbTrashFileUrl(res, url, session);
+  if (req.method === "GET" && url.pathname === "/api/trash") return smbListTrash(res, url);
+  if (req.method === "POST" && url.pathname === "/api/restore") return sendJson(res, 501, { error: "Papelera SMB no soportada aun" });
+  if (req.method === "DELETE" && url.pathname === "/api/trash") return sendJson(res, 501, { error: "Papelera SMB no soportada aun" });
+  if (req.method === "POST" && url.pathname === "/api/copy") return sendJson(res, 501, { error: "Copiar en SMB no soportado aun" });
+  if (req.method === "POST" && url.pathname === "/api/move") return sendJson(res, 501, { error: "Mover en SMB no soportado aun" });
+  sendJson(res, 404, { error: "No encontrado" });
 }
 
 async function listStorages(res) {
@@ -418,6 +457,417 @@ async function moveItem(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
+async function smbLogin(req, res, body, ip) {
+  const user = String(body.user || "").trim();
+  const password = String(body.password || "");
+  if (!user || !password) {
+    recordLoginFailure(ip);
+    return sendJson(res, 401, { error: "Usuario o contrasena incorrectos" });
+  }
+  const auth = { user, password };
+  await smbListShares(auth);
+  loginAttempts.delete(ip);
+  const id = crypto.randomBytes(32).toString("hex");
+  sessions.set(id, { user, auth, createdAt: Date.now(), expiresAt: Date.now() + SESSION_TTL_MS });
+  setCookie(res, "vault_session", id, `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}; HttpOnly; SameSite=Lax`);
+  sendJson(res, 200, { ok: true });
+}
+
+async function smbListStorages(res, session) {
+  const shares = await smbListShares(session.auth);
+  sendJson(res, 200, {
+    nasName: NAS_NAME,
+    storages: shares.map((share) => ({ id: slugify(share), name: share, share, count: 0 }))
+  });
+}
+
+async function smbStorageStatus(res, session) {
+  const shares = await smbListShares(session.auth).catch(() => []);
+  sendJson(res, 200, {
+    nasName: NAS_NAME,
+    storages: shares.map((share) => ({
+      id: slugify(share),
+      name: share,
+      root: `//${SMB_HOST}/${share}`,
+      exists: true,
+      writable: true,
+      readonly: false
+    }))
+  });
+}
+
+async function smbListFiles(res, url, session) {
+  const storage = await smbStorageFromUrl(url, session.auth);
+  const relative = sanitizeRel(url.searchParams.get("path") || "");
+  const result = await smbLs(session.auth, storage.share, relative);
+  sendJson(res, 200, {
+    nasName: NAS_NAME,
+    storage: { id: storage.id, name: storage.name },
+    path: relative,
+    parent: parentRel(relative),
+    items: sortItems(result.items.map((item) => ({
+      ...item,
+      path: joinRel(relative, item.name),
+      storage: storage.id
+    })), "name")
+  });
+}
+
+async function smbUploadFile(req, res, url, session) {
+  const storage = await smbStorageFromUrl(url, session.auth);
+  const folder = sanitizeRel(url.searchParams.get("path") || "");
+  const rawName = url.searchParams.get("name") || req.headers["x-file-name"] || "archivo";
+  const fileName = sanitizeName(String(rawName));
+  if (!fileName) return sendJson(res, 400, { error: "Nombre invalido" });
+  const tmp = await tmpPath(fileName);
+  try {
+    await pipeline(req, fs.createWriteStream(tmp, { flags: "w" }));
+    await smbCommand(session.auth, storage.share, [
+      ...smbCdCommands(folder),
+      `put ${smbQuote(tmp)} ${smbQuote(fileName)}`
+    ]);
+    sendJson(res, 200, { ok: true, name: fileName });
+  } finally {
+    await cleanupTmp(tmp);
+  }
+}
+
+async function smbDownloadFile(req, res, url, session) {
+  const { storage, relative, fileName } = await smbFileTarget(url, session.auth);
+  const tmp = await smbDownloadToTemp(session.auth, storage.share, relative, fileName);
+  const stat = await fsp.stat(tmp);
+  const cleanup = () => cleanupTmp(tmp);
+  res.writeHead(200, {
+    "Content-Type": "application/octet-stream",
+    "Content-Length": stat.size,
+    "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`
+  });
+  fs.createReadStream(tmp).pipe(res);
+  res.on("finish", cleanup);
+  res.on("close", cleanup);
+}
+
+async function smbPreviewFile(req, res, url, session) {
+  const { storage, relative, fileName } = await smbFileTarget(url, session.auth);
+  const ext = path.extname(fileName).toLowerCase();
+  const types = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime"
+  };
+  if (!types[ext]) return sendJson(res, 415, { error: "Sin vista previa" });
+  const tmp = await smbDownloadToTemp(session.auth, storage.share, relative, fileName);
+  const stat = await fsp.stat(tmp);
+  const cleanup = () => cleanupTmp(tmp);
+  res.on("finish", cleanup);
+  res.on("close", cleanup);
+  if (req.headers.range) return streamRange(res, tmp, stat.size, types[ext], req.headers.range);
+  res.writeHead(200, {
+    "Accept-Ranges": "bytes",
+    "Content-Type": types[ext],
+    "Content-Length": stat.size,
+    "Cache-Control": "private, max-age=60"
+  });
+  fs.createReadStream(tmp).pipe(res);
+}
+
+async function smbDetailsFile(res, url, session) {
+  const storage = await smbStorageFromUrl(url, session.auth);
+  const relative = sanitizeRel(url.searchParams.get("path") || "");
+  const folder = parentRel(relative);
+  const name = path.posix.basename(relative);
+  const result = await smbLs(session.auth, storage.share, folder);
+  const item = result.items.find((entry) => entry.name === name);
+  if (!item) return sendJson(res, 404, { error: "No encontrado" });
+  sendJson(res, 200, {
+    item: {
+      name,
+      path: relative,
+      storage: { id: storage.id, name: storage.name },
+      type: item.type,
+      kind: item.kind,
+      size: item.size,
+      modified: item.modified,
+      created: item.modified,
+      readonly: false
+    }
+  });
+}
+
+async function smbGetTextFile(res, url, session) {
+  const { storage, relative, fileName } = await smbFileTarget(url, session.auth);
+  const tmp = await smbDownloadToTemp(session.auth, storage.share, relative, fileName);
+  try {
+    const stat = await fsp.stat(tmp);
+    if (stat.size > TEXT_LIMIT_BYTES) return sendJson(res, 413, { error: "Archivo demasiado grande para editar" });
+    sendJson(res, 200, { content: await fsp.readFile(tmp, "utf8") });
+  } finally {
+    await cleanupTmp(tmp);
+  }
+}
+
+async function smbPutTextFile(req, res, url, session) {
+  const { storage, relative, folder, fileName } = await smbFileTarget(url, session.auth);
+  const body = await readJson(req, TEXT_LIMIT_BYTES + 4096);
+  const tmp = await tmpPath(fileName);
+  try {
+    await fsp.writeFile(tmp, String(body.content || ""), "utf8");
+    await smbCommand(session.auth, storage.share, [
+      ...smbCdCommands(folder),
+      `put ${smbQuote(tmp)} ${smbQuote(fileName)}`
+    ]);
+    sendJson(res, 200, { ok: true });
+  } finally {
+    await cleanupTmp(tmp);
+  }
+}
+
+async function smbCreateFolder(req, res, session) {
+  const body = await readJson(req);
+  const storage = await smbStorageFromId(body.storage, session.auth);
+  const folder = sanitizeRel(body.path || "");
+  const name = sanitizeName(body.name || "");
+  if (!name) return sendJson(res, 400, { error: "Nombre invalido" });
+  await smbCommand(session.auth, storage.share, [
+    ...smbCdCommands(folder),
+    `mkdir ${smbQuote(name)}`
+  ]);
+  sendJson(res, 200, { ok: true, name });
+}
+
+async function smbCreateTextFile(req, res, session) {
+  const body = await readJson(req);
+  const storage = await smbStorageFromId(body.storage, session.auth);
+  const folder = sanitizeRel(body.path || "");
+  const name = ensureTxt(sanitizeName(body.name || ""));
+  if (!name) return sendJson(res, 400, { error: "Nombre invalido" });
+  const tmp = await tmpPath(name);
+  try {
+    await fsp.writeFile(tmp, body.content || "", "utf8");
+    await smbCommand(session.auth, storage.share, [
+      ...smbCdCommands(folder),
+      `put ${smbQuote(tmp)} ${smbQuote(name)}`
+    ]);
+    sendJson(res, 200, { ok: true, name });
+  } finally {
+    await cleanupTmp(tmp);
+  }
+}
+
+async function smbRenameItem(req, res, session) {
+  const body = await readJson(req);
+  const storage = await smbStorageFromId(body.storage, session.auth);
+  const relative = sanitizeRel(body.path || "");
+  const folder = parentRel(relative);
+  const oldName = path.posix.basename(relative);
+  const newName = sanitizeName(body.name || "");
+  if (!relative || !newName) return sendJson(res, 400, { error: "Nombre invalido" });
+  await smbCommand(session.auth, storage.share, [
+    ...smbCdCommands(folder),
+    `rename ${smbQuote(oldName)} ${smbQuote(newName)}`
+  ]);
+  sendJson(res, 200, { ok: true, name: newName });
+}
+
+async function smbTrashFile(req, res, session) {
+  const body = await readJson(req);
+  const storage = await smbStorageFromId(body.storage, session.auth);
+  const relative = sanitizeRel(body.path || "");
+  await smbDeletePath(session.auth, storage.share, relative);
+  sendJson(res, 200, { ok: true, trashed: { path: relative, originalPath: relative } });
+}
+
+async function smbTrashMany(req, res, session) {
+  const body = await readJson(req);
+  const storage = await smbStorageFromId(body.storage, session.auth);
+  const paths = Array.isArray(body.paths) ? body.paths : [];
+  let count = 0;
+  for (const itemPath of paths) {
+    await smbDeletePath(session.auth, storage.share, sanitizeRel(itemPath)).then(() => count++).catch(() => {});
+  }
+  sendJson(res, 200, { ok: true, count, trashed: [] });
+}
+
+async function smbTrashFileUrl(res, url, session) {
+  const storage = await smbStorageFromUrl(url, session.auth);
+  const relative = sanitizeRel(url.searchParams.get("path") || "");
+  await smbDeletePath(session.auth, storage.share, relative);
+  sendJson(res, 200, { ok: true, trashed: { path: relative, originalPath: relative } });
+}
+
+async function smbListTrash(res, url) {
+  const storage = { id: url.searchParams.get("storage") || "", name: url.searchParams.get("storage") || "" };
+  sendJson(res, 200, { storage, items: [] });
+}
+
+async function smbDeletePath(auth, share, relative) {
+  if (!relative) throw publicError(400, "Ruta invalida");
+  const folder = parentRel(relative);
+  const name = path.posix.basename(relative);
+  const info = await smbLs(auth, share, folder).catch(() => ({ items: [] }));
+  const item = info.items.find((entry) => entry.name === name);
+  const command = item?.type === "folder" ? "rmdir" : "del";
+  await smbCommand(auth, share, [
+    ...smbCdCommands(folder),
+    `${command} ${smbQuote(name)}`
+  ]);
+}
+
+async function smbFileTarget(url, auth) {
+  const storage = await smbStorageFromUrl(url, auth);
+  const relative = sanitizeRel(url.searchParams.get("path") || "");
+  if (!relative) throw publicError(400, "Ruta invalida");
+  const folder = parentRel(relative);
+  const fileName = path.posix.basename(relative);
+  return { storage, relative, folder, fileName };
+}
+
+async function smbDownloadToTemp(auth, share, relative, fileName) {
+  const folder = parentRel(relative);
+  const tmp = await tmpPath(fileName);
+  await smbCommand(auth, share, [
+    ...smbCdCommands(folder),
+    `get ${smbQuote(fileName)} ${smbQuote(tmp)}`
+  ]);
+  return tmp;
+}
+
+async function smbListShares(auth) {
+  const result = await runSmbClient(auth, ["-g", "-L", `//${SMB_HOST}`]);
+  const shares = [];
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const parts = line.split("|");
+    if (parts[0] !== "Disk" || !parts[1]) continue;
+    if (parts[1].endsWith("$")) continue;
+    shares.push(parts[1]);
+  }
+  return [...new Set(shares)];
+}
+
+async function smbLs(auth, share, relative) {
+  const stdout = await smbCommand(auth, share, [...smbCdCommands(relative), "ls"]);
+  return { items: parseSmbLs(stdout) };
+}
+
+function parseSmbLs(output) {
+  const items = [];
+  for (const line of output.split(/\r?\n/)) {
+    const match = /^\s*(.+?)\s+([A-Z]+)\s+(\d+)\s+(.+)$/.exec(line);
+    if (!match) continue;
+    const name = match[1].trim();
+    if (!name || name === "." || name === ".." || name.startsWith(".")) continue;
+    const flags = match[2];
+    const folder = flags.includes("D");
+    const modified = new Date(match[4].trim());
+    items.push({
+      name,
+      type: folder ? "folder" : "file",
+      kind: classifyName(name, folder),
+      size: Number(match[3]) || 0,
+      modified: Number.isNaN(modified.getTime()) ? new Date().toISOString() : modified.toISOString()
+    });
+  }
+  return items;
+}
+
+async function smbStorageFromUrl(url, auth) {
+  return smbStorageFromId(url.searchParams.get("storage"), auth);
+}
+
+async function smbStorageFromId(id, auth) {
+  const shares = await smbListShares(auth);
+  const share = shares.find((name) => slugify(name) === id) || shares[0];
+  if (!share) throw publicError(403, "No hay recursos SMB disponibles para este usuario");
+  return { id: slugify(share), name: share, share };
+}
+
+async function smbCommand(auth, share, commands) {
+  const result = await runSmbClient(auth, [`//${SMB_HOST}/${share}`, "-c", commands.join("; ")]);
+  return result.stdout;
+}
+
+async function runSmbClient(auth, args) {
+  const authFile = await smbAuthFile(auth);
+  return new Promise((resolve, reject) => {
+    const fullArgs = ["-m", "SMB3", "-A", authFile, ...args];
+    const child = spawn(SMBCLIENT_BIN, fullArgs, {
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (handler) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      cleanupTmp(authFile).finally(handler);
+    };
+    const timer = setTimeout(() => child.kill("SIGTERM"), SMB_TIMEOUT_MS);
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", (error) => {
+      finish(() => {
+        if (error.code === "ENOENT") reject(publicError(500, `smbclient no esta instalado o no se encontro en ${SMBCLIENT_BIN}`));
+        else reject(error);
+      });
+    });
+    child.on("close", (code) => {
+      finish(() => {
+        if (code === 0) return resolve({ stdout, stderr });
+        reject(publicError(smbStatusCode(stderr || stdout), smbPublicError(stderr || stdout)));
+      });
+    });
+  });
+}
+
+async function smbAuthFile(auth) {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "haze-smb-auth-"));
+  const file = path.join(dir, "credentials");
+  const lines = [
+    `username = ${auth.user}`,
+    `password = ${auth.password}`
+  ];
+  if (SMB_WORKGROUP) lines.push(`workgroup = ${SMB_WORKGROUP}`);
+  await fsp.writeFile(file, `${lines.join("\n")}\n`, { mode: 0o600 });
+  return file;
+}
+
+function smbStatusCode(message) {
+  return /NT_STATUS_ACCESS_DENIED|NT_STATUS_LOGON_FAILURE|tree connect failed/i.test(message) ? 403 : 502;
+}
+
+function smbPublicError(message) {
+  if (/NT_STATUS_LOGON_FAILURE/i.test(message)) return "Usuario o contrasena incorrectos";
+  if (/NT_STATUS_ACCESS_DENIED/i.test(message)) return "No tienes permiso para esta carpeta";
+  if (/NT_STATUS_BAD_NETWORK_NAME|tree connect failed/i.test(message)) return "Recurso SMB no disponible";
+  return "Error SMB";
+}
+
+function smbCdCommands(relative) {
+  const clean = sanitizeRel(relative || "");
+  return clean ? [`cd ${smbQuote(clean)}`] : [];
+}
+
+function smbQuote(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
+async function tmpPath(name) {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "haze-smb-"));
+  return path.join(dir, sanitizeName(path.basename(name)) || "archivo");
+}
+
+async function cleanupTmp(filePath) {
+  await fsp.rm(path.dirname(filePath), { recursive: true, force: true }).catch(() => {});
+}
+
 function resolveRequestPath(url) {
   const storage = getStorage(url.searchParams.get("storage"));
   const relative = sanitizeRel(url.searchParams.get("path") || "");
@@ -641,15 +1091,19 @@ function parentRel(relative) {
 }
 
 function isAuthed(req) {
+  return Boolean(getSession(req));
+}
+
+function getSession(req) {
   const id = getSessionId(req);
-  if (!id) return false;
+  if (!id) return null;
   const session = sessions.get(id);
-  if (!session) return false;
+  if (!session) return null;
   if (session.expiresAt <= Date.now()) {
     sessions.delete(id);
-    return false;
+    return null;
   }
-  return true;
+  return session;
 }
 
 function getSessionId(req) {

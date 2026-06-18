@@ -1,8 +1,9 @@
 # Haze Vault
 
 Haze Vault es una app web local para administrar archivos de un NAS desde el
-navegador. Esta pensada para correr dentro de la red local y trabajar directo
-contra carpetas del sistema de archivos configuradas por el administrador.
+navegador. Puede trabajar directo contra carpetas locales configuradas por el
+administrador o conectarse a un servidor SMB/Samba usando las credenciales de
+cada usuario.
 
 ![Vista previa de Haze Vault](docs/assets/haze-vault-preview.png)
 
@@ -24,6 +25,7 @@ contra carpetas del sistema de archivos configuradas por el administrador.
 
 - Node.js 18 o superior.
 - Acceso de lectura/escritura a las carpetas que se van a administrar.
+- Para modo SMB: `smbclient` instalado en el servidor donde corre Haze Vault.
 - Un archivo `.env` local basado en `.env.example`.
 
 ## Desarrollo local
@@ -55,6 +57,7 @@ SESSION_TTL_HOURS=8
 LOGIN_MAX_ATTEMPTS=8
 TEXT_LIMIT_BYTES=1048576
 STORAGE_ROOTS=public:./data/public,private:./data/private
+BACKEND_MODE=local
 ```
 
 `STORAGE_ROOTS` define los espacios que aparecen en la app. El formato es:
@@ -81,12 +84,46 @@ printf '%s' 'usa-una-contrasena-larga' | shasum -a 256
 
 Si `VAULT_PASS_SHA256` esta definido, la app lo usa en lugar de `VAULT_PASS`.
 
+### Modo SMB/Samba
+
+Para usar Haze Vault como gestor de un NAS SMB, instala `smbclient` en la
+maquina donde corre la app y configura:
+
+```env
+BACKEND_MODE=smb
+HOST=0.0.0.0
+PORT=8080
+NAS_NAME=haze
+SMB_HOST=192.168.0.3
+SMB_WORKGROUP=WORKGROUP
+```
+
+En este modo el login de la app usa usuario y contrasena SMB. El backend lista
+los recursos con `smbclient -L //SMB_HOST` y opera contra rutas
+`//SMB_HOST/share`. Los permisos no los inventa la app: Samba/OpenMediaVault
+decide si el usuario puede listar, crear, subir, descargar, renombrar o borrar.
+
+Funciones soportadas inicialmente en SMB:
+
+- Login contra SMB.
+- Listado de shares visibles para el usuario.
+- Navegacion por carpetas y listado de archivos.
+- Crear carpeta y archivo TXT.
+- Subir, descargar, vista previa y editar texto.
+- Renombrar y borrar archivos/carpetas vacias.
+
+La papelera, copiar/mover entre shares y borrado recursivo de carpetas SMB no
+estan soportados aun.
+
 ## Seguridad
 
 - No subas el archivo `.env` al repo.
 - Cambia `VAULT_PASS` antes de usarlo en una red real o usa `VAULT_PASS_SHA256`.
 - Ejecuta la app con un usuario Linux sin privilegios de root.
 - Da permisos solo a las carpetas configuradas en `STORAGE_ROOTS`.
+- En modo SMB, usa HTTPS/VPN si vas a entrar desde fuera de la LAN; las
+  contrasenas SMB viven solo en memoria de sesion, pero viajan al backend al
+  iniciar sesion.
 - No expongas esta app directamente a internet sin HTTPS, proxy seguro y control de acceso adicional.
 
 ## Scripts

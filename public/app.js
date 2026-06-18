@@ -217,7 +217,6 @@ function renderStorages() {
     const card = document.createElement("button");
     card.className = "storage-card";
     card.innerHTML = `
-      <span class="file-icon">${icons.storage}</span>
       <strong></strong>
       <span class="storage-meta">${storage.count} elemento${storage.count === 1 ? "" : "s"}</span>
     `;
